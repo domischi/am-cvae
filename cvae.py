@@ -29,7 +29,7 @@ save_freq = 2
 BINARIZATION = False
 HYPER_OPT_EVALS = 1
 BASE_DIR = 'data/'
-os.makedirs(BASE_DIR, exist_k=True)
+os.makedirs(BASE_DIR, exist_ok=True)
 
 
 # ## Load the MNIST dataset
