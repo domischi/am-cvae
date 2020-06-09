@@ -1,16 +1,9 @@
-## The following code is heavily based on Google's CVAE tutorial (https://www.tensorflow.org/tutorials/generative/cvae)
-## and on Keras' blog post about auto-encoders (https://blog.keras.io/building-autoencoders-in-keras.html)
-
 import tensorflow as tf
 import tensorflow.keras as keras
 import os
-import time
 import numpy as np
 import sklearn.model_selection
-import hyperopt
-import sys
-import json
-import pickle
+from hyperopt import STATUS_OK
 
 ## Get rid of some very verbose logging of TF
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -22,46 +15,14 @@ config = ConfigProto()
 config.gpu_options.allow_growth = True
 session = InteractiveSession(config=config)
 
-# Define constants
-BATCH_SIZE = 100
-epochs = 4
-save_freq = 2
-BINARIZATION = False
-HYPER_OPT_EVALS = 1
-BASE_DIR = 'data/'
-os.makedirs(BASE_DIR, exist_ok=True)
 
+def cross_validated_run(parameters, train_images, test_images, n_splits=6, do_summary=False):
 
-# ## Load the MNIST dataset
-(train_images, y_train), (test_images, y_test) = tf.keras.datasets.mnist.load_data()
+    image_size_x = train_images.shape[1]
+    image_size_y = train_images.shape[2]
+    #TRAIN_BUF = train_images.shape[0]
+    #TEST_BUF = test_images.shape[0]
 
-image_size_x = train_images.shape[1]
-image_size_y = train_images.shape[2]
-
-train_images = train_images.reshape(train_images.shape[0], image_size_x, image_size_y, 1).astype('float32')
-test_images = test_images.reshape(test_images.shape[0], image_size_x, image_size_y, 1).astype('float32')
-
-# Assert the following (otherwise script crashes during learning due to hard coded reshapes)
-assert train_images.shape[0] % BATCH_SIZE == 0
-
-# Normalizing the images to the range of [0., 1.]
-train_images /= 255.
-test_images /= 255.
-
-## Binarization
-if BINARIZATION:
-    train_images[train_images >= .5] = 1.
-    train_images[train_images < .5] = 0.
-    test_images[test_images >= .5] = 1.
-    test_images[test_images < .5] = 0.
-
-
-TRAIN_BUF = train_images.shape[0]
-TEST_BUF = test_images.shape[0]
-
-
-
-def cross_validated_run(parameters, n_splits=6, do_summary=False):
     class CVAE(keras.Model):
         def __init__(self, latent_dim):
             super(CVAE, self).__init__()
@@ -107,7 +68,7 @@ def cross_validated_run(parameters, n_splits=6, do_summary=False):
                 print(self.generative_net.summary())
                 print(parameters['conv_net_conf']['stride_0'])
                 raise RuntimeError('Output-Shape and input shape are not equal!')
-            
+
         def call(self, inputs):
             mean, logvar = model.encode(inputs)
             z = model.reparameterize(mean, logvar)
@@ -126,7 +87,7 @@ def cross_validated_run(parameters, n_splits=6, do_summary=False):
             mean, logvar = tf.split(self.inference_net(x), num_or_size_splits=2, axis=1)
             return mean, logvar
         def decode(self, z):
-            return self.generative_net(z)  
+            return self.generative_net(z)
 
         @tf.function
         def sample(self, eps=None):
@@ -134,7 +95,7 @@ def cross_validated_run(parameters, n_splits=6, do_summary=False):
                 eps = tf.random.normal(shape=(100, self.latent_dim))
             return self.decode(eps)
         def reparameterize(self, mean, logvar):
-            eps = tf.random.normal(shape=[BATCH_SIZE, self.latent_dim])
+            eps = tf.random.normal(shape=[parameters['BATCH_SIZE'], self.latent_dim])
             return eps * tf.exp(logvar * .5) + mean
 
     val_losses=[]
@@ -159,58 +120,9 @@ def cross_validated_run(parameters, n_splits=6, do_summary=False):
         print(f'Doing split {i+1}/{kf.get_n_splits()}')
         local_train_images = train_images[train_index]
         local_test_images = train_images[test_index]
-        assert local_train_images.shape[0] % BATCH_SIZE == 0
+        assert local_train_images.shape[0] % parameters['BATCH_SIZE'] == 0
         model = CVAE(parameters['latent_dim'])
         model.compile(optimizer=optimizer)
-        fit_history = model.fit(local_train_images, local_train_images, verbose=0, epochs=5, batch_size=BATCH_SIZE, validation_data=(local_test_images, local_test_images))
+        fit_history = model.fit(local_train_images, local_train_images, verbose=0, epochs=5, batch_size=parameters['BATCH_SIZE'], validation_data=(local_test_images, local_test_images))
         val_losses.append(fit_history.history['val_loss'][-1])
-    return {'loss': np.mean(val_losses), 'loss_variance': np.var(val_losses), 'status': hyperopt.STATUS_OK}
-
-trials = hyperopt.Trials()
-conv_net_filters = [8,16,32]
-search_space = {
-    'optimizer': hyperopt.hp.choice('optimizer',['adam', 'adagrad', 'rmsprop', 'nadam','ftrl']),
-    'learning_rate': hyperopt.hp.loguniform('learning_rate',np.log(1e-6),np.log(1e-2)),
-    'latent_dim' : 2,
-    'conv_net_conf': hyperopt.hp.choice('conv_net_conf', [
-        {
-            'depth': 1,
-            'stride_0' : hyperopt.hp.choice('stride1_0',[1,2]),
-            'channels_0' : hyperopt.hp.choice('channels1_0',conv_net_filters),
-        },
-        {
-            'depth': 2,
-            'stride_0' : hyperopt.hp.choice('stride2_0',[1,2]),
-            'channels_0' : hyperopt.hp.choice('channels2_0',conv_net_filters),
-            'stride_1' : hyperopt.hp.choice('stride2_1',[1,2]),
-            'channels_1' : hyperopt.hp.choice('channels2_1',conv_net_filters),
-        },
-        {
-            'depth': 3,
-            'stride_0' : hyperopt.hp.choice('stride3_0',[1,2]),
-            'channels_0' : hyperopt.hp.choice('channels3_0',conv_net_filters),
-            'stride_1' : hyperopt.hp.choice('stride3_1',[1,2]),
-            'channels_1' : hyperopt.hp.choice('channels3_1',conv_net_filters),
-            'stride_2' : 1,
-            'channels_2' : hyperopt.hp.choice('channels3_2',conv_net_filters),
-        },
-        {
-            'depth': 4,
-            'stride_0' : hyperopt.hp.choice('stride4_0',[1,2]),
-            'channels_0' : hyperopt.hp.choice('channels4_0',conv_net_filters),
-            'stride_1' : hyperopt.hp.choice('stride4_1',[1,2]),
-            'channels_1' : hyperopt.hp.choice('channels4_1',conv_net_filters),
-            'stride_2' : 1,
-            'channels_2' : hyperopt.hp.choice('channels4_2',conv_net_filters),
-            'stride_3' : 1,
-            'channels_3' : hyperopt.hp.choice('channels4_3',conv_net_filters),
-        },
-        ])
-    }
-best = hyperopt.fmin(lambda c: cross_validated_run(c, n_splits=2), search_space, algo=hyperopt.tpe.suggest, max_evals=HYPER_OPT_EVALS, trials=trials)
-
-timestamp = int( time.time() )
-with open(f'{BASE_DIR}/best-{timestamp}.json', 'w') as f:
-    json.dump(hyperopt.space_eval(search_space, best), f, indent=4,sort_keys=True)
-with open(f'{BASE_DIR}/trials-{timestamp}.pkl', 'wb') as f:
-    pickle.dump(trials, f)
+    return {'loss': np.mean(val_losses), 'loss_variance': np.var(val_losses), 'status': STATUS_OK}
