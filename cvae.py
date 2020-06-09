@@ -30,17 +30,10 @@ session = InteractiveSession(config=config)
 # Define constants
 BATCH_SIZE = 100
 epochs = 4
-num_examples_to_generate = 16
 save_freq = 2
 BINARIZATION = False
 BASE_DIR = 'data/'
 HYPER_OPT_EVALS = 1
-
-# Define Variables
-optimizer = 'adam'
-learning_rate = 1e-4
-latent_dim = 2
-
 
 # ## Load the MNIST dataset
 (train_images, y_train), (test_images, y_test) = tf.keras.datasets.mnist.load_data()
@@ -156,7 +149,7 @@ def cross_validated_run(parameters, n_splits=6, do_summary=False):
                 total_strides*=stride
                 inf_net_layers.append(tf.keras.layers.Conv2D(filters=nfilters, kernel_size=3, strides=stride, activation='relu', padding='same'))
             inf_net_layers.append(tf.keras.layers.Flatten())
-            inf_net_layers.append(tf.keras.layers.Dense(latent_dim + latent_dim))
+            inf_net_layers.append(tf.keras.layers.Dense(self.latent_dim + self.latent_dim))
             self.inference_net = tf.keras.Sequential(inf_net_layers)
             if do_summary:
                 print(self.inference_net.summary())
@@ -165,9 +158,9 @@ def cross_validated_run(parameters, n_splits=6, do_summary=False):
             assert image_size_y % total_strides == 0
             condensed_image_size_x = image_size_x // total_strides
             condensed_image_size_y = image_size_y // total_strides
-            last_n_channels = parameters['conv_net_conf'][f'channels_{depth-1}']# TODO fix this
+            last_n_channels = parameters['conv_net_conf'][f'channels_{depth-1}']
             gen_net_layers = [
-                    tf.keras.layers.Input(shape=(latent_dim,)),
+                    tf.keras.layers.Input(shape=(self.latent_dim,)),
                     tf.keras.layers.Dense(units=condensed_image_size_x * condensed_image_size_y * last_n_channels, activation=tf.nn.relu),
                     tf.keras.layers.Reshape(target_shape=(condensed_image_size_x, condensed_image_size_y, last_n_channels)),
             ]
@@ -212,7 +205,7 @@ def cross_validated_run(parameters, n_splits=6, do_summary=False):
                 eps = tf.random.normal(shape=(100, self.latent_dim))
             return self.decode(eps)
         def reparameterize(self, mean, logvar):
-            eps = tf.random.normal(shape=[BATCH_SIZE, latent_dim])
+            eps = tf.random.normal(shape=[BATCH_SIZE, self.latent_dim])
             return eps * tf.exp(logvar * .5) + mean
 
     val_losses=[]
@@ -238,7 +231,7 @@ def cross_validated_run(parameters, n_splits=6, do_summary=False):
         local_train_images = train_images[train_index]
         local_test_images = train_images[test_index]
         assert local_train_images.shape[0] % BATCH_SIZE == 0
-        model = CVAE(latent_dim)
+        model = CVAE(parameters['latent_dim'])
         model.compile(optimizer=optimizer)
         fit_history = model.fit(local_train_images, local_train_images, verbose=0, epochs=5, batch_size=BATCH_SIZE, validation_data=(local_test_images, local_test_images))
         val_losses.append(fit_history.history['val_loss'][-1])
@@ -288,7 +281,5 @@ search_space = {
 best = hyperopt.fmin(lambda c: cross_validated_run(c, n_splits=2), search_space, algo=hyperopt.tpe.suggest, max_evals=HYPER_OPT_EVALS, trials=trials)
 with open(f'{BASE_DIR}/best.json', 'w') as f:
     json.dump(hyperopt.space_eval(search_space, best), f, indent=4,sort_keys=True)
-with open(f'data/trials.pkl', 'wb') as f:
+with open(f'{BASE_DIR}/trials.pkl', 'wb') as f:
     pickle.dump(trials, f)
-
-#model.save(f'{BASE_DIR}/cvae.model')
