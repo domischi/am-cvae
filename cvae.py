@@ -27,8 +27,10 @@ BATCH_SIZE = 100
 epochs = 4
 save_freq = 2
 BINARIZATION = False
-BASE_DIR = 'data/'
 HYPER_OPT_EVALS = 1
+BASE_DIR = 'data/'
+os.makedirs(BASE_DIR, exist_k=True)
+
 
 # ## Load the MNIST dataset
 (train_images, y_train), (test_images, y_test) = tf.keras.datasets.mnist.load_data()
@@ -206,7 +208,9 @@ search_space = {
         ])
     }
 best = hyperopt.fmin(lambda c: cross_validated_run(c, n_splits=2), search_space, algo=hyperopt.tpe.suggest, max_evals=HYPER_OPT_EVALS, trials=trials)
-with open(f'{BASE_DIR}/best.json', 'w') as f:
+
+timestamp = int( time.time() )
+with open(f'{BASE_DIR}/best-{timestamp}.json', 'w') as f:
     json.dump(hyperopt.space_eval(search_space, best), f, indent=4,sort_keys=True)
-with open(f'{BASE_DIR}/trials.pkl', 'wb') as f:
+with open(f'{BASE_DIR}/trials-{timestamp}.pkl', 'wb') as f:
     pickle.dump(trials, f)
