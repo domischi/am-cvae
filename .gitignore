@@ -1,4 +1,7 @@
 __pycache__
 *.swp
 venv
+
+# don't track data folders
 data
+ray_tune
