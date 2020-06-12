@@ -2,16 +2,11 @@ import tensorflow as tf
 import tensorflow.keras as keras
 import os
 import numpy as np
-import sklearn.model_selection
-#from hyperopt import STATUS_OK
 from load_data import get_mnist_data
-import sys
-
 from ray import tune
 
 ## Get rid of some very verbose logging of TF
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
 
 class CVAE(keras.Model):
     def __init__(self, config, train_set_image_shape):
@@ -87,7 +82,7 @@ class CVAE(keras.Model):
         return self.generative_net(z)
     def sample(self, eps=None):
         if eps is None:
-            eps = tf.random.normal(shape=(100, self.latent_dim))
+            eps = tf.random.normal(shape=(self.BATCH_SIZE, self.latent_dim))
         return self.decode(eps)
     def reparameterize(self, mean, logvar):
         eps = tf.random.normal(shape=[self.BATCH_SIZE, self.latent_dim])
@@ -105,21 +100,15 @@ class CVAETrainable(tune.Trainable):
         tf_config.gpu_options.allow_growth = True
         session = InteractiveSession(config=tf_config)
 
-        tf.summary.scalar('conv_net_depth', config['conv_net_depth'], step=1)
+        ## Load data (to get shape of data)
         from load_data import get_mnist_data
-        self.x_train, self.x_test = get_mnist_data(100, config.get('BINARIZATION', False))
-        #x_train, x_test = x_train / 255.0, x_test / 255.0
+        self.x_train, self.x_test = get_mnist_data(config['BATCH_SIZE'], config.get('BINARIZATION', False))
+        self.BATCH_SIZE = config.get('BATCH_SIZE')
 
-        # Add a channels dimension
-        #x_train = x_train[..., tf.newaxis]
-        #x_test = x_test[..., tf.newaxis]
-        #self.train_ds = tf.data.Dataset.from_tensor_slices((x_train, x_train))
-        #self.train_ds = self.train_ds.shuffle(10000).batch(config.get("batch", 100))
-
-        #self.test_ds = tf.data.Dataset.from_tensor_slices((x_test, x_test)).batch(100)
-
+        ## Initialize model
         self.model = CVAE(config, self.x_train.shape)
 
+        ## Initialize optimizer
         lr = config.get('learning_rate', 1e-3)
         optimizer = config.get('optimizer', 'adam')
         if optimizer == 'adam':
@@ -135,91 +124,33 @@ class CVAETrainable(tune.Trainable):
         else:
             raise RuntimeError(f"Unrecognized optimizer: {config.get('optimizer','adam')}")
 
+        ## Initialize metric accumulators (to be displayed in tensorboard)
         self.train_loss = tf.keras.metrics.Mean(name="train_loss")
         self.test_loss = tf.keras.metrics.Mean(name="test_loss")
 
+        ## Compile the model with the optimizer
         self.model.compile(optimizer=optimizer)
 
-        #@tf.function
-        #def train_step(images, labels):
-        #    with tf.GradientTape() as tape:
-        #        predictions = self.model(images)
-        #        loss = self.loss_object(labels, predictions)
-        #    gradients = tape.gradient(loss, self.model.trainable_variables)
-        #    self.optimizer.apply_gradients(
-        #        zip(gradients, self.model.trainable_variables))
-
-        #    self.train_loss(loss)
-        #    self.train_accuracy(labels, predictions)
-
-        #@tf.function
-        #def test_step(images, labels):
-        #    predictions = self.model(images)
-        #    t_loss = self.loss_object(labels, predictions)
-
-        #    self.test_loss(t_loss)
-        #    self.test_accuracy(labels, predictions)
-
-        #self.tf_train_step = train_step
-        #self.tf_test_step = test_step
-
-
-
     def _train(self):
+        ## Not sure why they are required...
         self.train_loss.reset_states()
-        #self.train_accuracy.reset_states()
         self.test_loss.reset_states()
-        #self.test_accuracy.reset_states()
 
-        fit_history = self.model.fit(self.x_train, self.x_train, verbose=0, epochs=1, batch_size=100, validation_data=(self.x_test,self.x_test))
+        ## Fit (only for 1 epoch, bc the multi epoch thing is handled by ray)
+        fit_history = self.model.fit(self.x_train, self.x_train, verbose=0, epochs=1, batch_size=self.BATCH_SIZE, validation_data=(self.x_test,self.x_test))
 
-        #for idx, (images, labels) in enumerate(self.train_ds):
-        #    if idx > MAX_TRAIN_BATCH:  # This is optional and can be removed.
-        #        break
-        #    self.tf_train_step(images, labels)
-
-        #for test_images, test_labels in self.test_ds:
-        #    self.tf_test_step(test_images, test_labels)
-
+        ## Log the losses
         loss = fit_history.history['loss'][0]
         val_loss = fit_history.history['val_loss'][0]
-
         self.train_loss(loss)
         self.test_loss(val_loss)
 
-        tf.summary.scalar('test_loss', val_loss, step=1)
-
+        ## Return what is required by ray
         return {
             "epoch": self.iteration,
             "loss": self.train_loss.result().numpy(),
-            #"accuracy": self.train_accuracy.result().numpy() * 100,
             "test_loss":self.test_loss.result().numpy(),
-            #"mean_accuracy": self.test_accuracy.result().numpy() * 100
         }
-
-#def cross_validated_run(parameters, train_images, test_images, n_splits=6, do_summary=False):
-#
-#    image_size_x = train_images.shape[1]
-#    image_size_y = train_images.shape[2]
-#    #TRAIN_BUF = train_images.shape[0]
-#    #TEST_BUF = test_images.shape[0]
-#
-#
-#    val_losses=[]
-#    kf = sklearn.model_selection.KFold(n_splits=n_splits, shuffle=True)
-#
-#
-#    for i, (train_index, test_index) in enumerate(kf.split(train_images)):
-#        print(f'Doing split {i+1}/{kf.get_n_splits()}')
-#        local_train_images = train_images[train_index]
-#        local_test_images = train_images[test_index]
-#        assert local_train_images.shape[0] % parameters['BATCH_SIZE'] == 0
-#        model = CVAE(parameters['latent_dim'])
-#        model.compile(optimizer=optimizer)
-#        fit_history = model.fit(local_train_images, local_train_images, verbose=0, epochs=5, batch_size=parameters['BATCH_SIZE'], validation_data=(local_test_images, local_test_images))
-#        val_losses.append(fit_history.history['val_loss'][-1])
-#    return {'loss': np.mean(val_losses), 'loss_variance': np.var(val_losses), 'status': STATUS_OK}
-
 
 if __name__ == "__main__":
     # Define constants
@@ -227,16 +158,15 @@ if __name__ == "__main__":
     epochs = 2 
     BINARIZATION = False
     TEST_CANDIDATES = 10
-    #BASE_DIR = 'data/'
-    #os.makedirs(BASE_DIR, exist_ok=True)
+    BASE_DIR = './ray_tune/'
+    os.makedirs(BASE_DIR, exist_ok=True)
     get_mnist_data(BATCH_SIZE, False)
-    conv_net_filters = ['8','16','32'] # Sadly have to cheat to register this in tensorboard
+    conv_net_filters = ['8','16','32'] # Sadly have to store them as strings to cheat and register this in tensorboard
     search_space = {
         'BATCH_SIZE': BATCH_SIZE, 
         'optimizer': tune.choice(['adam', 'adagrad', 'rmsprop', 'nadam','ftrl']),
         'learning_rate': tune.loguniform(1e-6,1e-2),
         'latent_dim' : 2,
-        #'conv_net_depth': tune.choice([1,2,3,4]),
         'conv_net_depth': tune.randint(1,4+1),
         'stride_0' : tune.randint(1,2+1),
         'channels_0' : tune.choice(conv_net_filters),
@@ -252,20 +182,6 @@ if __name__ == "__main__":
         stop={"training_iteration": epochs},
         verbose=0,
         num_samples=TEST_CANDIDATES,
-        local_dir='./ray_tune/',
+        local_dir=BASE_DIR,
         resources_per_trial={'gpu': 1},
         config=search_space)
-
-## Define the search space
-#trials = hyperopt.Trials()
-#conv_net_filters = [8,16,32]
-#
-## Do the fitting
-#best = hyperopt.fmin(lambda c: cross_validated_run(c, *get_mnist_data(BATCH_SIZE, BINARIZATION), n_splits=2), search_space, algo=hyperopt.tpe.suggest, max_evals=HYPER_OPT_EVALS, trials=trials)
-#
-## Save the results
-#timestamp = int( time.time() )
-#with open(f'{BASE_DIR}/best-{timestamp}.json', 'w') as f:
-#    json.dump(hyperopt.space_eval(search_space, best), f, indent=4,sort_keys=True)
-#with open(f'{BASE_DIR}/trials-{timestamp}.pkl', 'wb') as f:
-#    pickle.dump(trials, f)
