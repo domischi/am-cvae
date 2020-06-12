@@ -7,6 +7,7 @@ if __name__ == "__main__":
     # Define constants
     BATCH_SIZE = 100
     epochs = 20
+    min_epochs = 5
     BINARIZATION = False
     TEST_CANDIDATES = 20
     BASE_DIR = './ray_tune/'
@@ -28,11 +29,18 @@ if __name__ == "__main__":
         'stride_3' : 1,
         'channels_3' : tune.choice(conv_net_filters),
         }
+    ahb = tune.schedulers.AsyncHyperBandScheduler(
+            time_attr="training_iteration",
+            metric="test_loss",
+            mode="min",
+            grace_period=min_epochs,
+            max_t=epochs)
     tune.run(
         CVAE_trainable,
         stop={"training_iteration": epochs},
         verbose=0,
         num_samples=TEST_CANDIDATES,
         local_dir=BASE_DIR,
-        #resources_per_trial={'gpu': 1},
+        resources_per_trial={'gpu': 1},
+        scheduler=ahb,
         config=search_space)
