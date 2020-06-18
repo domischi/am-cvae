@@ -2,7 +2,7 @@ import tensorflow as tf
 import tensorflow.keras as keras
 import os
 import numpy as np
-from load_data import get_mnist_data
+from load_data import get_mnist_data, get_experimental_data
 from ray import tune
 from cvae import CVAE
 
@@ -22,8 +22,13 @@ class CVAE_trainable(tune.Trainable):
         session = InteractiveSession(config=tf_config)
 
         ## Load data (to get shape of data)
-        from load_data import get_mnist_data
-        self.x_train, self.x_test = get_mnist_data(config['BATCH_SIZE'], config.get('BINARIZATION', False))
+        from load_data import get_mnist_data, get_experimental_data
+        if config['DATA_TYPE'] == 'mnist':
+            self.x_train, self.x_test = get_mnist_data(config['BATCH_SIZE'], config.get('BINARIZATION', False))
+        elif config['DATA_TYPE']=='experiment':
+            self.x_train, self.x_test = get_experimental_data(config['BATCH_SIZE'],config['project_dir'])
+        else:
+            raise RuntimeError(f"Did not understand DATA_TYPE: {DATA_TYPE}")
         self.BATCH_SIZE = config.get('BATCH_SIZE')
 
         ## Initialize model

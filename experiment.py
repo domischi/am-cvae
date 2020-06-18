@@ -1,7 +1,7 @@
 import os
 from ray import tune
 from cvae_trainable import CVAE_trainable
-from load_data import get_mnist_data
+from load_data import get_mnist_data, get_experimental_data
 
 if __name__ == "__main__":
     # Define constants
@@ -9,12 +9,20 @@ if __name__ == "__main__":
     epochs = 20
     min_epochs = 5
     BINARIZATION = False
+    DATA_TYPE = 'experiment'
     TEST_CANDIDATES = 20
     BASE_DIR = './ray_tune/'
     os.makedirs(BASE_DIR, exist_ok=True)
-    get_mnist_data(BATCH_SIZE, False)
+    if DATA_TYPE=='mnist':
+        get_mnist_data(BATCH_SIZE, False)
+    elif DATA_TYPE=='experiment':
+        get_experimental_data(BATCH_SIZE, os.getcwd())
+    else:
+        raise RuntimeError(f"Did not understand DATA_TYPE: {DATA_TYPE}")
     conv_net_filters = ['8','16','32'] # Sadly have to store them as strings to cheat and register this in tensorboard
     search_space = {
+        'DATA_TYPE': DATA_TYPE,
+        'project_dir': os.getcwd(), # Required, because otherwise finding the data is painful.
         'BATCH_SIZE': BATCH_SIZE,
         'optimizer': tune.choice(['adam', 'adagrad', 'rmsprop', 'nadam','ftrl']),
         'learning_rate': tune.loguniform(1e-6,1e-2),

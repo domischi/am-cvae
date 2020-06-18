@@ -2,7 +2,6 @@ import tensorflow as tf
 import tensorflow.keras as keras
 import os
 import numpy as np
-from load_data import get_mnist_data
 from ray import tune
 
 ## Get rid of some very verbose logging of TF
@@ -18,7 +17,7 @@ class CVAE(keras.Model):
         depth = config.get('conv_net_depth', 2)
 
         inf_net_layers = [
-                tf.keras.layers.Input(shape=(image_size_x, image_size_x, 1)),
+                tf.keras.layers.Input(shape=(image_size_x, image_size_y, 1)),
         ]
         total_strides=1
         for i in range(depth):
